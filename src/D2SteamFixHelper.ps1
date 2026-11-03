@@ -2111,6 +2111,13 @@ function Show-MainWindow {
             return
         }
 
+        $recovery = @(Get-RecoveryFiles -GameDir $script:GameDir -Options $existing)
+        if ($recovery.Count -gt 0) {
+            Show-Note ("권한 복구 파일이 남아 있어 설정 제거를 멈췄습니다.`n`n" +
+                ($recovery -join "`n") + "`n`n게임을 정상 종료한 뒤 다시 시도하세요. 파일이 남으면 최신 steamfix.exe 를 직접 열어 복구를 진행하세요.`n복구는 Steam과 게임을 종료하고 오버레이 파일을 다시 받습니다. 창 내용을 확인한 뒤 진행하세요.`n복구 파일을 직접 삭제하지 마세요.") -Title '권한 복구 먼저 필요' -Icon 'Warning'
+            return
+        }
+
         if (-not $existing) {
             & $writeLog '되돌릴 설정이 없습니다.'
             Show-Note "이 계정에는 실행 옵션이 설정되어 있지 않습니다.`n되돌릴 것이 없습니다." -Title '변경 없음'
@@ -2121,13 +2128,6 @@ function Show-MainWindow {
         if ($newValue -eq $existing) {
             & $writeLog 'steamfix 설정이 없어 변경하지 않았습니다.'
             Show-Note "이 계정의 실행 옵션에는 D2SteamFix 설정이 없습니다.`n아무것도 바꾸지 않았습니다.`n`n현재 실행 옵션:`n$existing" -Title '변경 없음'
-            return
-        }
-
-        $recovery = @(Get-RecoveryFiles -GameDir $script:GameDir -Options $existing)
-        if ($recovery.Count -gt 0) {
-            Show-Note ("권한 복구 파일이 남아 있어 설정 제거를 멈췄습니다.`n`n" +
-                ($recovery -join "`n") + "`n`n게임을 정상 종료한 뒤 다시 시도하세요. 파일이 남으면 최신 steamfix.exe 를 직접 열어 복구를 진행하세요.`n복구는 Steam과 게임을 종료하고 오버레이 파일을 다시 받습니다. 창 내용을 확인한 뒤 진행하세요.`n복구 파일을 직접 삭제하지 마세요.") -Title '권한 복구 먼저 필요' -Icon 'Warning'
             return
         }
 
@@ -2165,7 +2165,7 @@ function Show-MainWindow {
 
             Show-Note ("되돌리기가 끝났습니다.`n`n$remain`n`n" +
                 "Steam을 다시 실행하면 Destiny 2 는 D2SteamFix 없이 시작됩니다.`n" +
-                "Steam 오버레이 기능(Steam Input, 알림, 게임 녹화, 원격 플레이)도 다시 동작합니다.") -Title '완료'
+                "Steam 오버레이 권한의 복구 여부는 확인하지 않았습니다.`n오버레이가 동작하지 않으면 최신 steamfix.exe 를 직접 열어 복구 안내를 확인하세요.") -Title '완료'
         }
         catch {
             & $writeLog ('오류: {0}' -f $_.Exception.Message)
