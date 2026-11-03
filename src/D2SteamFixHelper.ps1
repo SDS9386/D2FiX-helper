@@ -3,7 +3,7 @@
     D2SteamFix 한국어 설치 도우미
 
     steamfix.exe 자체는 포함하지 않습니다. GitHub 공식 릴리스에서 받은
-    서명된 바이너리를 그대로 사용하고, 이 도구는 아래 작업만 대신합니다.
+    공식 바이너리를 그대로 사용하고, 이 도구는 아래 작업만 대신합니다.
 
       - Steam / Destiny 2 설치 경로 자동 탐지
       - steamfix.exe 가 올바른 위치에 있는지 확인
@@ -24,9 +24,9 @@ $script:AppId       = '1085660'
 $script:GameName    = 'Destiny 2'
 $script:ExeName     = 'steamfix.exe'
 $script:RepoUrl     = 'https://github.com/d2checkpoint-com/D2SteamFix'
-# GitHub 릴리스 탭은 비어 있다. 배포는 제작자의 자체 서버에서만 이루어진다.
+# 공식 최신 릴리스 페이지에서 사용자가 직접 받는다.
 $script:GuideUrl    = 'https://github.com/d2checkpoint-com/D2SteamFix#installation'
-$script:DownloadUrl = 'https://pkg.d2checkpoint.com/D2SteamFix/steamfix.exe'
+$script:DownloadUrl = 'https://github.com/d2checkpoint-com/D2SteamFix/releases/latest'
 # 백업은 %LOCALAPPDATA% 에 둔다. 도우미 폴더 옆에 두면 찾기는 쉽지만,
 # 권한 없는 위치에 넣거나 압축을 풀지 않고 실행하면 백업이 실패하거나 사라진다.
 # 위치는 3단계 아래에 그대로 표시하고 눌러서 열 수 있게 해 두었다.
@@ -584,7 +584,7 @@ function Get-DiagnosticReport {
         else { & $add 'steamfix.log  : 없음  <-- steamfix 가 시작조차 못 했다는 뜻' }
 
         $dat = Join-Path $GameDir 'steamfix.dat'
-        & $add ('steamfix.dat  : {0}' -f $(if (Test-Path -LiteralPath $dat) { '있음  <-- 지난 실행이 비정상 종료됨' } else { '없음 (정상)' }))
+        & $add ('steamfix.dat  : {0}' -f $(if (Test-Path -LiteralPath $dat) { '있음  <-- 실행 중이거나 권한 복구가 남아 있음 (삭제 금지)' } else { '없음 (정상)' }))
     }
     else { & $add '경로          : 찾지 못함' }
     & $add ''
@@ -669,7 +669,7 @@ function Get-InstalledAntivirus {
 # 숫자만 보여 주면 백신이 막은 것인지, 게임이 이미 켜져 있는 것인지 구분할 수 없다.
 $script:ExitCodeNotes = @{
     '0'  = '정상 종료'
-    '10' = '스팀을 거치지 않은 직접 실행이라 거부'
+    '10' = '올바르지 않은 실행 인자'
     '11' = '기록 파일을 만들지 못함'
     '12' = 'Destiny 2 · 스팀 앱 ID · 권한 확인 실패'
     '13' = '다른 SteamFix 나 Destiny 2 가 이미 실행 중'
@@ -704,72 +704,41 @@ function Get-ExitCodeHint {
 }
 
 # 백신이 막고 있는지 가리는 가장 확실한 방법.
-# steamfix.exe 를 인자 없이 실행하면 "스팀을 통해 실행하라"며 거부하지만(종료 코드 10),
-# 거부하기 전에 로그부터 남긴다. 즉 조금이라도 돌면 로그가 생긴다.
-#   - 실행 자체가 안 되면       -> 백신이나 정책이 막는 것
-#   - 실행은 됐는데 로그가 없으면 -> 폴더에 쓰지 못하는 것
-# 인자가 없으면 오버레이 권한을 건드리기 전에 종료하므로 게임에 영향이 없다.
-function Test-SteamFixLaunch {
+# v1.1.0부터 직접 실행은 복구 모드다. 진단에서 실행하거나 강제 종료하지 않는다.
+function Test-SteamFixFile {
     param([string]$GameDir)
-
-    $result = [pscustomobject]@{ Ran = $false; ExitCode = $null; LogWritten = $false; Error = $null }
-
-    if (-not $GameDir) { $result.Error = '게임 폴더를 모릅니다'; return $result }
+    $result = [pscustomobject]@{ Checked = $false; Blocked = $null; Note = $null }
+    if (-not $GameDir) { return $result }
+    $result.Checked = $true
     $exe = Join-Path $GameDir $script:ExeName
-    if (-not (Test-Path -LiteralPath $exe)) { $result.Error = 'steamfix.exe 가 없습니다'; return $result }
-
-    $log    = Join-Path $GameDir 'steamfix.log'
-    $before = 0
-    if (Test-Path -LiteralPath $log) { $before = (Get-Item -LiteralPath $log).Length }
-
-    try {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName               = $exe
-        $psi.WorkingDirectory       = $GameDir
-        $psi.UseShellExecute        = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError  = $true
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        [void]$proc.StandardOutput.ReadToEndAsync()
-        [void]$proc.StandardError.ReadToEndAsync()
-        if (-not $proc.WaitForExit(15000)) { $proc.Kill(); [void]$proc.WaitForExit(3000) }
-        $result.Ran      = $true
-        $result.ExitCode = $proc.ExitCode
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        $result.Blocked = 'steamfix.exe 가 없습니다. 최신 공식 릴리스에서 받아 주세요.'
     }
-    catch {
-        $result.Error = $_.Exception.Message
-        return $result
+    elseif (-not (Test-IsExecutable -Path $exe)) {
+        $result.Blocked = '실행 파일 헤더를 읽을 수 없거나 MZ 형식이 아닙니다. 파일을 다시 확인해 주세요.'
     }
-
-    Start-Sleep -Milliseconds 400
-    $after = 0
-    if (Test-Path -LiteralPath $log) { $after = (Get-Item -LiteralPath $log).Length }
-    $result.LogWritten = ($after -gt $before)
+    else {
+        $result.Note = '파일 헤더 확인 완료. 실행 가능 여부와 백신 차단 여부는 확인하지 않았습니다.'
+    }
     return $result
 }
 
-# 설정을 끝낸 직후 실제로 한 번 돌려 보고 결과를 정리해 돌려준다.
-# 창 코드 안에 분기를 두면 검사할 수 없어 함수로 빼 두었다.
-#   Checked = $false : steamfix.exe 가 없어 확인하지 않음(옵션만 먼저 설정한 경우)
-#   Blocked = $null  : 정상. 그 외에는 사람이 읽을 실패 문장이 들어 있다.
-function Test-LaunchAfterApply {
-    param([string]$GameDir)
-
-    $result = [pscustomobject]@{ Checked = $false; Blocked = $null; Note = $null }
-    if (-not $GameDir) { return $result }
-    if (-not (Test-Path (Join-Path $GameDir $script:ExeName))) { return $result }
-
-    $probe          = Test-SteamFixLaunch -GameDir $GameDir
-    $result.Checked = $true
-    $result.Note    = Get-ExitCodeNote -Code $probe.ExitCode
-
-    if ($probe.Error) {
-        $result.Blocked = ('실행하지 못했습니다: {0}' -f $probe.Error)
+# 설정 경로와 현재 탐지 경로를 모두 확인한다. 백업은 직접 삭제하지 않는다.
+function Get-RecoveryFiles {
+    param([string]$GameDir, [string]$Options)
+    $dirs = @()
+    if ($GameDir) { $dirs += $GameDir }
+    $exe = Get-LaunchOptionExePath -Options $Options
+    if ($exe -and [IO.Path]::IsPathRooted($exe) -and
+        [IO.Path]::GetFileName($exe) -ieq 'steamfix.exe') {
+        $dirs += [IO.Path]::GetDirectoryName($exe)
     }
-    elseif (-not $probe.LogWritten) {
-        $result.Blocked = ('실행은 됐지만 기록 파일을 만들지 못했습니다 ({0})' -f $result.Note)
+    foreach ($dir in ($dirs | Select-Object -Unique)) {
+        foreach ($name in @('steamfix.dat', 'steamfix.dat.tmp', 'steamfix.dat.old')) {
+            $path = Join-Path $dir $name
+            if (Test-Path -LiteralPath $path) { $path }
+        }
     }
-    return $result
 }
 
 function Test-SteamRunning {
@@ -987,17 +956,6 @@ function Invoke-SelfTest {
     Assert-Equal $true  (Unblock-DownloadedFile -Path $blockTarget) '차단 해제 성공'
     Assert-Equal $false (Test-FileBlocked -Path $blockTarget) '해제 후 정상으로 판정'
     Assert-Equal $false (Test-FileBlocked -Path (Join-Path $diagGame '없는파일.exe')) '없는 파일은 차단 아님'
-
-    # 실행 테스트: 파일이 없을 때와, 실제로 도는 exe 를 넣었을 때
-    $noRun = Test-SteamFixLaunch -GameDir (Join-Path $diagRoot 'steamapps')
-    Assert-Equal $true ($null -ne $noRun.Error) 'steamfix.exe 없으면 오류로 보고'
-    Assert-Equal $false $noRun.Ran              '없으면 실행하지 않음'
-
-    Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\whoami.exe') -Destination (Join-Path $diagGame 'steamfix.exe') -Force
-    $ranTest = Test-SteamFixLaunch -GameDir $diagGame
-    Assert-Equal $true  $ranTest.Ran        '실행 가능한 파일은 실행됨'
-    Assert-Null  $ranTest.Error             '실행되면 오류 없음'
-    Assert-Equal $false $ranTest.LogWritten '로그를 안 쓰는 프로그램은 기록 없음으로 판정'
 
     $avOk = $true
     $avResult = $null
@@ -1228,7 +1186,7 @@ function Invoke-SelfTest {
     }
 
     Write-Host "`n== 종료 코드 해설 ==" -ForegroundColor Cyan
-    Assert-Equal '종료 코드 10 — 스팀을 거치지 않은 직접 실행이라 거부' (Get-ExitCodeNote -Code 10) '코드 10 (실행 테스트에서 정상인 경우)'
+    Assert-Equal '종료 코드 10 — 올바르지 않은 실행 인자' (Get-ExitCodeNote -Code 10) '코드 10 (잘못된 실행 인자)'
     Assert-Equal '종료 코드 13 — 다른 SteamFix 나 Destiny 2 가 이미 실행 중' (Get-ExitCodeNote -Code 13) '코드 13'
     Assert-Equal '종료 코드 없음' (Get-ExitCodeNote -Code $null) '코드가 없을 때'
     Assert-Equal $true ((Get-ExitCodeNote -Code 99) -match '적혀 있지 않은') '문서에 없는 코드도 문장으로'
@@ -1239,28 +1197,30 @@ function Invoke-SelfTest {
         Assert-Equal $false ((Get-ExitCodeNote -Code $code) -match '적혀 있지 않은') ('코드 {0} 해설 있음' -f $code)
     }
 
-    Write-Host "`n== 설정 직후 실행 테스트 판정 ==" -ForegroundColor Cyan
-    $applyRoot = Join-Path $env:TEMP ('d2sfh-apply-{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+    Write-Host "`n== 실행하지 않는 파일 확인 및 복구 상태 ==" -ForegroundColor Cyan
+    $applyRoot = Join-Path $env:TEMP ('d2sfh-apply-{0}' -f [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $applyRoot -Force | Out-Null
-
-    $noExe = Test-LaunchAfterApply -GameDir $applyRoot
-    Assert-Equal $false $noExe.Checked  'steamfix.exe 가 없으면 확인하지 않음'
-    Assert-Null  $noExe.Blocked         '확인하지 않았으면 막힌 것도 아님'
-    Assert-Equal $false (Test-LaunchAfterApply -GameDir '').Checked '게임 폴더를 모르면 확인하지 않음'
-
-    # 실행은 되지만 로그를 남기지 않는 프로그램 → '기록 파일을 만들지 못했다' 쪽
-    Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\whoami.exe') `
-              -Destination (Join-Path $applyRoot $script:ExeName) -Force
-    $noLog = Test-LaunchAfterApply -GameDir $applyRoot
-    Assert-Equal $true $noLog.Checked '파일이 있으면 실제로 실행해 확인'
-    Assert-Equal $true ($noLog.Blocked -match '기록 파일') '로그를 못 만들면 막힌 것으로 판정'
-    Assert-Equal $true ($noLog.Blocked -match '종료 코드') '실패 문장에 종료 코드 해설을 붙임'
-
-    # 실행 자체가 안 되는 파일 → 백신이 막았을 때와 같은 모양('실행하지 못했습니다')
-    Set-Content -Path (Join-Path $applyRoot $script:ExeName) -Value 'MZ 아닌 내용' -Encoding Ascii
-    $cantRun = Test-LaunchAfterApply -GameDir $applyRoot
-    Assert-Equal $true ($cantRun.Blocked -match '실행하지 못했습니다') '실행이 막히면 그대로 알림'
-    Remove-Item -LiteralPath $applyRoot -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        Assert-Equal $false (Test-SteamFixFile -GameDir '').Checked '경로가 없으면 확인하지 않음'
+        Assert-Equal $true ((Test-SteamFixFile -GameDir $applyRoot).Blocked -match '없습니다') '파일 누락 안내'
+        # MZ뿐인 파일도 실행하지 않고 헤더만 검사한다. 실행 검증으로 오인하지 않는다.
+        $testExe = Join-Path $applyRoot 'steamfix.exe'
+        [IO.File]::WriteAllText($testExe, 'MZ')
+        Assert-Null (Test-SteamFixFile -GameDir $applyRoot).Blocked '헤더 검사 중 파일을 실행하지 않음'
+        Assert-Equal $true ((Test-SteamFixFile -GameDir $applyRoot).Note -match '확인하지 않았습니다') '검사 한계 안내'
+        [IO.File]::WriteAllText($testExe, 'invalid')
+        Assert-Equal $true ((Test-SteamFixFile -GameDir $applyRoot).Blocked -match 'MZ') '잘못된 헤더 안내'
+        Assert-Equal 0 @(Get-RecoveryFiles -GameDir $applyRoot).Count '복구 파일 없음'
+        foreach ($name in @('steamfix.dat', 'steamfix.dat.tmp', 'steamfix.dat.old')) {
+            [IO.File]::WriteAllText((Join-Path $applyRoot $name), 'backup')
+        }
+        $options = '"' + $testExe + '" %command%'
+        Assert-Equal 3 @(Get-RecoveryFiles -Options $options).Count '실행 옵션의 실제 폴더 확인'
+        Assert-Equal 3 @(Get-RecoveryFiles -GameDir $applyRoot -Options $options).Count '같은 폴더는 중복하지 않음'
+        Assert-Equal 3 @(Get-RecoveryFiles -GameDir $applyRoot -Options 'other.exe').Count '탐지 폴더도 확인'
+        Assert-Equal 'backup' ([IO.File]::ReadAllText((Join-Path $applyRoot 'steamfix.dat'))) '복구 파일 보존'
+    }
+    finally { Remove-Item -LiteralPath $applyRoot -Recurse -Force }
 
     Write-Host "`n== 실제 설치 환경 (읽기 전용) ==" -ForegroundColor Cyan
     $steam = Get-SteamPath
@@ -1571,43 +1531,16 @@ function Show-DiagnosticWindow {
     $lblDone = New-UiLabel -Parent $dlg -X 14 -Y 512 -W 340 `
         -ForeColor ([System.Drawing.Color]::FromArgb(0, 120, 40)) -Anchor 'Bottom,Left'
 
-    # 백신이 막고 있는지 가리는 결정적 검사. 프로그램을 실제로 한 번 돌려보므로
-    # 사용자가 직접 누를 때만 실행한다.
-    $btnRun = New-UiButton -Parent $dlg -Text '실행 테스트' -X 384 -Y 508 -W 120 -H 30 -Anchor 'Bottom,Right'
-
+    $btnRun = New-UiButton -Parent $dlg -Text '파일 확인' -X 384 -Y 508 -W 120 -H 30 -Anchor 'Bottom,Right'
     $btnCopy = New-UiButton -Parent $dlg -Text '복사하기' -X 516 -Y 508 -W 110 -H 30 -Anchor 'Bottom,Right'
-
     $btnRun.Add_Click({
-        $btnRun.Enabled = $false
-        $lblDone.Text   = '실행 테스트 중...'
-        $dlg.Cursor     = [System.Windows.Forms.Cursors]::WaitCursor
         try {
-            $res = Test-SteamFixLaunch -GameDir $GameDir
-            $lines = @('', '[실행 테스트]')
-            if ($res.Error) {
-                $lines += ('  실행하지 못했습니다: {0}' -f $res.Error)
-                $lines += '  <-- 백신이나 정책이 실행을 막고 있을 가능성이 큽니다.'
-            }
-            elseif (-not $res.LogWritten) {
-                $lines += ('  실행됨 ({0}) 이지만 기록 파일이 생기지 않음' -f (Get-ExitCodeNote -Code $res.ExitCode))
-                $lines += '  <-- 폴더에 쓰지 못하거나 백신이 기록을 막고 있습니다.'
-            }
-            else {
-                $lines += ('  정상 ({0}, 기록 파일 생성 확인)' -f (Get-ExitCodeNote -Code $res.ExitCode))
-                $lines += '  프로그램 자체는 잘 실행됩니다. 백신 차단은 아닙니다.'
-            }
-            $hint = Get-ExitCodeHint -Code $res.ExitCode
-            if ($hint) { $lines += ('  ※ {0}' -f $hint) }
-            $txt.Text = $txt.Text + [Environment]::NewLine + ($lines -join [Environment]::NewLine)
-            $txt.SelectionStart  = $txt.Text.Length
-            $txt.ScrollToCaret()
-            $lblDone.Text = '실행 테스트를 마쳤습니다. 아래에 결과가 추가되었습니다.'
+            $res = Test-SteamFixFile -GameDir $GameDir
+            $note = if ($res.Blocked) { $res.Blocked } elseif ($res.Checked) { $res.Note } else { '게임 폴더를 먼저 지정해 주세요.' }
+            $txt.AppendText([Environment]::NewLine + '[파일 확인] ' + $note)
+            $lblDone.Text = '파일 확인 완료 (프로그램은 실행하지 않음)'
         }
-        catch { $lblDone.Text = ('실행 테스트 실패: {0}' -f $_.Exception.Message) }
-        finally {
-            $dlg.Cursor     = [System.Windows.Forms.Cursors]::Default
-            $btnRun.Enabled = $true
-        }
+        catch { $lblDone.Text = ('확인 실패: {0}' -f $_.Exception.Message) }
     })
 
     $btnClose = New-UiButton -Parent $dlg -Text '닫기' -X 634 -Y 508 -W 102 -H 30 -Anchor 'Bottom,Right'
@@ -1683,7 +1616,7 @@ function Show-MainWindow {
     # --- 2단계 -------------------------------------------------------------
     $g2 = New-UiGroup -Parent $form -Text ' 2단계 · steamfix.exe 준비 ' -X 14 -Y 202 -W 676 -H 92
 
-    $lblGuide = New-UiLabel -Parent $g2 -Text '제작자 배포처에서 steamfix.exe 를 받아 게임 폴더에 넣어 주세요. (GitHub 릴리스 탭은 비어 있습니다)' `
+    $lblGuide = New-UiLabel -Parent $g2 -Text 'GitHub 최신 릴리스의 Assets에서 steamfix.exe 를 받아 게임 폴더에 넣어 주세요.' `
         -X 14 -Y 24 -W 648
 
     $btnDownload = New-UiButton -Parent $g2 -Text '다운로드 안내 열기' -X 14 -Y 52 -W 150
@@ -1844,12 +1777,12 @@ function Show-MainWindow {
             # steamfix 가 돌지 못했다는 뜻일 수 있다. 백신이 조용히 막는 경우가 이렇다.
             $logPath = Join-Path $script:GameDir 'steamfix.log'
             if (Test-Path -LiteralPath $logPath) {
-                & $setStatus '● 작동 중 — 오버레이 차단이 적용되어 있습니다' `
+                & $setStatus '● 설정됨 — 실행 기록이 있습니다' `
                              '게임을 실행하면 D2SteamFix 를 거쳐 시작됩니다. 스팀 오버레이 기능은 꺼집니다.' $okColor $okBack
             }
             else {
                 & $setStatus '● 설정됨 — 아직 한 번도 실행된 적이 없습니다' `
-                             '게임을 실행한 뒤에도 이대로면 백신이 조용히 막는 중입니다. [작동 안 될 때]에서 확인하세요.' $okColor $okBack
+                             '게임 실행 후에도 로그가 없으면 [작동 안 될 때]에서 경로와 백신 차단 기록을 확인하세요.' $okColor $okBack
             }
         }
         elseif ($hasFix) {
@@ -2017,18 +1950,16 @@ function Show-MainWindow {
         Start-Process $script:GuideUrl
         & $writeLog '브라우저에서 설치 안내(README)를 열었습니다.'
         & $writeLog ('배포 주소: {0}' -f $script:DownloadUrl)
-        Show-Note ("이 프로그램은 GitHub 릴리스 탭에 파일을 올려두지 않습니다.`n" +
-            "제작자 서버에서 직접 받는 방식입니다.`n`n" +
-            "방금 열린 페이지의 Installation 항목에서`n" +
-            "파란색 steamfix.exe 링크를 누르면 내려받아집니다.`n`n" +
-            "배포 주소:`n$($script:DownloadUrl)`n`n" +
-            "받은 파일은 [게임 폴더 열기]로 열리는 폴더에 그대로 넣어 주세요.") -Title '내려받는 방법'
+        Show-Note ("열린 설치 안내의 최신 릴리스 링크를 누르세요.`n" +
+            "릴리스 페이지의 Assets에서 steamfix.exe 를 받으세요.`n`n" +
+            "최신 릴리스:`n$($script:DownloadUrl)`n`n" +
+            "받은 파일은 [게임 폴더 열기]로 열리는 폴더에 넣어 주세요.") -Title '내려받는 방법'
     })
 
     $btnCopyUrl.Add_Click({
         [System.Windows.Forms.Clipboard]::SetText($script:DownloadUrl)
-        & $writeLog ('다운로드 주소를 클립보드에 복사했습니다: {0}' -f $script:DownloadUrl)
-        Show-Note "주소를 복사했습니다.`n브라우저 주소창에 Ctrl+V 로 붙여넣으면 내려받아집니다.`n`n$($script:DownloadUrl)" -Title '주소 복사됨'
+        & $writeLog ('최신 릴리스 주소 복사: {0}' -f $script:DownloadUrl)
+        Show-Note "주소를 복사했습니다.`n브라우저에서 열고 Assets의 steamfix.exe 를 받으세요.`n`n$($script:DownloadUrl)" -Title '주소 복사됨'
     })
 
     # 원본 저장소 docs/WINDOWS_DEFENDER.md 의 절차를 한국어로 옮긴 것.
@@ -2045,8 +1976,8 @@ function Show-MainWindow {
             "실제 사례에서 윈도우 보안은 경고만 하고 실행은 됐고,`n" +
             "국내 백신은 아무 알림 없이 조용히 실행만 막았습니다.`n" +
             "게임이 안 켜지는데 백신 경고도 없다면 이쪽을 의심하세요.`n`n" +
-            "확인 방법: [작동 안 될 때] - [실행 테스트] 를 누르면`n" +
-            "실행이 막혔는지 바로 판별됩니다.`n`n" +
+            "확인 방법: [작동 안 될 때]에서 진단 정보를 확인하고`n" +
+            "백신의 차단 기록과 steamfix.log 를 함께 확인하세요.`n`n" +
             "─────────────────────────────`n`n" +
             "[ 윈도우 보안(Defender)이 잡는 경우 ]`n`n" +
             "만든 사람이 마이크로소프트에 신고해서 오진으로 확인받았고,`n" +
@@ -2147,29 +2078,13 @@ function Show-MainWindow {
             if ($saved.Removed -gt 0) { & $writeLog ('오래된 백업 {0}개 정리 (최근 {1}개 보관)' -f $saved.Removed, $script:BackupKeep) }
             & $refreshCurrent
 
-            # 백신이 아무 말 없이 실행만 막는 경우가 실제로 있었다(V3). 설정이 끝났다고만
-            # 알리면 사용자는 게임을 켜 봐야 그걸 알게 되므로, 여기서 한 번 실제로 돌려 본다.
-            # 인자 없이 실행하면 오버레이를 건드리기 전에 스스로 종료하므로 게임에 영향이 없다.
-            & $writeLog '실행 테스트: steamfix.exe 가 실제로 실행되는지 확인합니다...'
-            $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-            $probe = Test-LaunchAfterApply -GameDir $script:GameDir
-            $form.Cursor = [System.Windows.Forms.Cursors]::Default
-
-            if (-not $probe.Checked) { & $writeLog '실행 테스트: steamfix.exe 가 없어 건너뜁니다.' }
-            elseif (-not $probe.Blocked) { & $writeLog ('실행 테스트: 정상 ({0})' -f $probe.Note) }
-
+            $probe = Test-SteamFixFile -GameDir $script:GameDir
             if ($probe.Blocked) {
-                $blocked = $probe.Blocked
-                & $writeLog ('실행 테스트 실패 — {0}' -f $blocked)
-                Show-Note ("실행 옵션은 설정했습니다. 그런데 steamfix.exe 가 지금 실행되지 않습니다.`n`n" +
-                    "$blocked`n`n" +
-                    "이 상태로 게임을 켜면 아무 경고 없이 그냥 실행되지 않습니다.`n" +
-                    "백신이 조용히 막는 경우가 가장 많습니다.`n`n" +
-                    "[백신에 잡힐 때] 를 눌러 안내를 보시거나,`n" +
-                    "[작동 안 될 때] 에서 진단 정보를 확인해 주세요.") -Title '실행이 막혀 있습니다' -Icon 'Warning'
+                & $writeLog ('파일 확인: {0}' -f $probe.Blocked)
+                Show-Note ("실행 옵션은 저장했습니다.`n`n" + $probe.Blocked) -Title '파일 확인 필요' -Icon 'Warning'
             }
             else {
-                Show-Note "설정이 끝났습니다.`n`nSteam을 다시 실행하고 Destiny 2 를 시작하면 적용됩니다.`n`n※ Steam 오버레이 관련 기능(Steam Input, 알림, 게임 녹화, 원격 플레이)은 동작하지 않게 됩니다." -Title '완료'
+                Show-Note "설정이 끝났습니다.`n`nSteam을 다시 실행하고 Destiny 2 를 시작하세요.`n실행 가능 여부와 백신 차단 여부는 검사하지 않았습니다.`n`n※ Steam 오버레이 관련 기능(Steam Input, 알림, 게임 녹화, 원격 플레이)은 동작하지 않게 됩니다." -Title '완료'
             }
         }
         catch {
@@ -2209,12 +2124,26 @@ function Show-MainWindow {
             return
         }
 
+        $recovery = @(Get-RecoveryFiles -GameDir $script:GameDir -Options $existing)
+        if ($recovery.Count -gt 0) {
+            Show-Note ("권한 복구 파일이 남아 있어 설정 제거를 멈췄습니다.`n`n" +
+                ($recovery -join "`n") + "`n`n게임을 정상 종료한 뒤 다시 시도하세요. 파일이 남으면 최신 steamfix.exe 를 직접 열어 복구를 진행하세요.`n복구는 Steam과 게임을 종료하고 오버레이 파일을 다시 받습니다. 창 내용을 확인한 뒤 진행하세요.`n복구 파일을 직접 삭제하지 마세요.") -Title '권한 복구 먼저 필요' -Icon 'Warning'
+            return
+        }
+
         if (-not (& $ensureSteamClosed)) { return }
 
         try {
             # Steam 은 종료하면서 localconfig.vdf 를 다시 쓴다. 위에서 읽어둔 값은
             # 이미 낡았을 수 있으므로, 실제로 고치기 직전에 다시 읽는다.
             $existing = Get-LaunchOptions -LocalConfigPath $acc.LocalConfig
+            $recovery = @(Get-RecoveryFiles -GameDir $script:GameDir -Options $existing)
+            if ($recovery.Count -gt 0) {
+                Show-Note ("권한 복구 파일이 남아 있어 설정 제거를 멈췄습니다.`n`n" +
+                    ($recovery -join "`n") + "`n`n게임을 정상 종료한 뒤 다시 시도하세요. 파일이 남으면 최신 steamfix.exe 를 직접 열어 복구를 진행하세요.`n복구는 Steam과 게임을 종료하고 오버레이 파일을 다시 받습니다. 창 내용을 확인한 뒤 진행하세요.`n복구 파일을 직접 삭제하지 마세요.") -Title '권한 복구 먼저 필요' -Icon 'Warning'
+                return
+            }
+
             $newValue = Remove-SteamFixFromOptions -Existing $existing
             if ($newValue -eq $existing) {
                 & $writeLog 'steamfix 설정이 없어 변경하지 않았습니다.'
