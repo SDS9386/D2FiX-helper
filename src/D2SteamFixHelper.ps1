@@ -1791,7 +1791,7 @@ function Show-MainWindow {
         }
         elseif ($current -eq '') {
             & $setStatus '○ 꺼짐 — 평소대로 실행됩니다' `
-                         'D2SteamFix 가 적용되어 있지 않습니다. 스팀 오버레이는 정상 동작합니다.' $offFore $offBack
+                         'D2SteamFix 실행 옵션이 없습니다. 오버레이 권한 복구 여부는 확인하지 않았습니다.' $offFore $offBack
         }
         else {
             & $setStatus '○ 꺼짐 — 평소대로 실행됩니다' `
